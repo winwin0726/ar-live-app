@@ -196,6 +196,47 @@ export class ArEngine {
           return uv;
       }
 
+      // ====================================================================
+      // [SOTA] 얼굴 크기 조절 - Radial Boundary Warp
+      // 스냅챗/FaceApp/TikTok 방식: 얼굴 중심 유지, 경계만 밀고당기기
+      // 중심(눈/코/입) 왜곡량=0, 경계(볼/광대/이마/턱) 왜곡량=MAX
+      // ====================================================================
+      vec2 warpFaceScale(vec2 uv, float faceStr) {
+          if (abs(faceStr) < 0.001) return uv;
+          if (u_points[3].x < 0.001) return uv;
+          
+          // 얼굴 중심점 (코 + 양눈 평균)
+          vec2 faceCenter = u_points[3];
+          if (u_points[4].x > 0.001 && u_points[5].x > 0.001) {
+              faceCenter = (u_points[3] + u_points[4] + u_points[5]) / 3.0;
+          }
+          faceCenter.x *= u_aspectRatio;
+          
+          float fw = getFaceSize();
+          float warpRadius = fw * 0.85;
+          
+          vec2 p = uv; p.x *= u_aspectRatio;
+          float dist = length(p - faceCenter);
+          
+          if (dist > 0.0001 && dist < warpRadius) {
+              // t=0(중심) → t=1(경계): 중심에서 왜곡 0, 경계에서 왜곡 MAX
+              float t = 1.0 - (dist / warpRadius);
+              float weight = t * t * (3.0 - 2.0 * t);
+              weight = weight * weight; // 제곱으로 중심부 더 안정
+              
+              vec2 dir = normalize(p - faceCenter);
+              float disp = weight * faceStr * fw * 0.18;
+              
+              // UV 역방향: disp>0이면 대두(UV 바깥으로 밀려야 찍음)
+              p -= dir * disp;
+              
+              uv.x = p.x / u_aspectRatio;
+              uv.y = p.y;
+          }
+          
+          return uv;
+      }
+
       // SOTA RBF Jawline 워프
       // 턱선 슬리밍 전용 (얼굴 하관 윤곽을 따라 V라인으로 안쪽으로 당김)
       vec2 warpFaceContour(vec2 uv, float jawStr) {
@@ -316,21 +357,10 @@ export class ArEngine {
               smoothAdj = max(smoothAdj, 0.7);
           }
 
-          // 0. 얼굴 전체 크기 조절 (얼굴 중심 기준 균일 확대/축소)
-          // 코·이마·하관 모두 동일 비율로 스케일 → 찌그러짐/땅콩 현상 완전 제거
-          if (abs(face) > 0.001 && u_points[3].x > 0.001) {
-              // 얼굴 중심 = 코(3) + 양 눈(4,5) + 양 턱선끝(0,20) 평균
-              vec2 fc = (u_points[3] + u_points[4] + u_points[5]) / 3.0;
-              if (u_jawPoints[0].x > 0.001) {
-                  fc = (fc * 3.0 + u_jawPoints[0] + u_jawPoints[20]) / 5.0;
-              }
-              // face < 0 → 축소(소두), face > 0 → 확대(대두)
-              float scaleFactor = 1.0 + face * 0.18;
-              scaleFactor = max(scaleFactor, 0.5); // 최소 50% 이하 방지
-              // 얼굴 중심 기준으로 UV 스케일 적용 (배경은 fgProb로 이후 보호)
-              uv = fc + (uv - fc) / scaleFactor;
-          }
-
+          // 0. 얼굴 크기 조절 (Radial Boundary Warp - SOTA)
+          // 눈/코/입은 안정, 볼·광대·이마·턱선 경계만 안/밖으로 이동
+          // face < 0 → 소두(경계 안으로 수축), face > 0 → 대두(경계 바깥으로 팽창)
+          uv = warpFaceScale(uv, -face);
 
           // 1. 턱선 전용 RBF 워프 (V라인 슬리밍)
           uv = warpFaceContour(uv, jaw);
