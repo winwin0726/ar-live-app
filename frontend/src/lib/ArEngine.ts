@@ -219,15 +219,19 @@ export class ArEngine {
           float dist = length(p - faceCenter);
           
           if (dist > 0.0001 && dist < warpRadius) {
-              // t=0(중심) → t=1(경계): 중심에서 왜곡 0, 경계에서 왜곡 MAX
-              float t = 1.0 - (dist / warpRadius);
-              float weight = t * t * (3.0 - 2.0 * t);
-              weight = weight * weight; // 제곱으로 중심부 더 안정
+              // t=0이 중심, t=1이 경계 (반드시 이 방향이어야 함)
+              float t = dist / warpRadius;
+              
+              // 파라볼릭 커브: t=0(중심)→ weight=0, t=0.5(경계)→ weight=MAX, t=1→ weight=0
+              // 수식: 4t(1-t) - 중심과 경계 바깥 모두 0, 얼굴 윤곽에서 최대
+              float weight = 4.0 * t * (1.0 - t);
+              weight = clamp(weight, 0.0, 1.0);
               
               vec2 dir = normalize(p - faceCenter);
-              float disp = weight * faceStr * fw * 0.18;
+              // disp > 0 → 대두(경계 픽셀을 안쪽으로 샘플 → 팽창 효과)
+              // disp < 0 → 소두(경계 픽셀을 바깥으로 샘플 → 수축 효과)
+              float disp = weight * faceStr * fw * 0.20;
               
-              // UV 역방향: disp>0이면 대두(UV 바깥으로 밀려야 찍음)
               p -= dir * disp;
               
               uv.x = p.x / u_aspectRatio;
