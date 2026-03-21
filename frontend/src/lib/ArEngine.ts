@@ -197,36 +197,52 @@ export class ArEngine {
       }
 
       // ====================================================================
-      // 얼굴 크기 조절 - 4-Point Cheek Push 방식
-      // 좌볼/우볼/이마 3개 기준점에서 동시에 부드럽게 밀고 당기기
-      // warpPixel(strength>0) → UV 중심에서 멀어짐 → 이미지가 해당 기준점 쪽으로 수축
-      // face < 0 → 소두(볼을 안으로 밀어 얼굴이 좁아짐)
-      // face > 0 → 대두(볼을 밖으로 밀어 얼굴이 넒어짐)
+      // 얼굴 크기 조절 - X축 전용 Horizontal Gradient Warp
+      // uv.y 는 절대 건드리지 않으므로 위아래 스트레칭 원천 차단
+      // ▶ 눈/코/입 중심 → 수평 이동 극소 (xWeight 0에 수렴)
+      // ▶ 광대(눈 아래~코 사이) → 수평 이동 최대 (yWeight 1.0)
+      // ▶ 턱선(코 아래~턱 끝) → 수평 이동 중간 (yWeight 0.5~1.0)
       // ====================================================================
       vec2 warpFaceScale(vec2 uv, float faceStr) {
           if (abs(faceStr) < 0.001) return uv;
-          if (u_jawPoints[0].x < 0.001) return uv;
-          if (u_jawPoints[20].x < 0.001) return uv;
+          if (u_jawPoints[0].x < 0.001 || u_jawPoints[10].x < 0.001) return uv;
+          if (u_points[4].x < 0.001 || u_points[3].x < 0.001) return uv;
 
           float fw = getFaceSize();
-          float r = fw * 0.55; // 볼~이마를 충분히 덮는 반경
 
-          // 좌측 볼 기준점: 턱선 5번 (왼쪽 광대 아래)
-          vec2 leftCheek = mix(u_jawPoints[3], u_jawPoints[5], 0.5);
-          // 우측 볼 기준점: 턱선 15번 (오른쪽 광대 아래)
-          vec2 rightCheek = mix(u_jawPoints[15], u_jawPoints[17], 0.5);
-          // 이마 기준점: 양 눈 중간에서 위로
-          vec2 forehead = (u_points[4] + u_points[5]) * 0.5;
-          forehead.y -= fw * 0.20; // 이마 위쪽
+          // ── Y 영역별 가중치 계산 ─────────────────────────────────────────
+          // 눈 평균 Y: 이 위쪽은 이마(효과 없음)
+          float eyeY  = (u_points[4].y + u_points[5].y) * 0.5;
+          float chinY =  u_jawPoints[10].y; // 턱 끝 Y
+          // UV Y 좌표에서 MediaPipe 좌표는 위→아래 방향이 증가 방향
+          // 턱이 아래이므로 chinY > eyeY
+          float faceH = abs(chinY - eyeY);
+          // yRatio: 눈 = 0, 턱 = 1
+          float yRatio = clamp((uv.y - min(eyeY, chinY)) / faceH, 0.0, 1.0);
 
-          // strength 방향:
-          //   소두(faceStr < 0) → 각 기준점 양수(안으로 이미지 당김) → strength = -faceStr (양수)
-          //   대두(faceStr > 0) → 각 기준점 음수(밖으로 이미지 밂) → strength = -faceStr (음수)
-          float s = -faceStr * 0.18;
+          // 광대 구간(0.15~0.55): 최대 효과
+          // 턱선 구간(0.55~0.85): 중간 효과 (0.65배)
+          // 눈/이마(0~0.15), 턱끝(0.85~1.0): 효과 없음
+          float cheekW  = smoothstep(0.0, 0.20, yRatio)
+                        * (1.0 - smoothstep(0.50, 0.65, yRatio));
+          float jawW    = smoothstep(0.45, 0.60, yRatio)
+                        * (1.0 - smoothstep(0.82, 1.0,  yRatio)) * 0.65;
+          float yWeight = max(cheekW, jawW); // 광대 또는 턱선 중 큰 값
 
-          uv = warpPixel(uv, leftCheek,  r, s);
-          uv = warpPixel(uv, rightCheek, r, s);
-          uv = warpPixel(uv, forehead,   r * 0.8, s * 0.5); // 이마는 약하게
+          // ── X 중립 보호 ──────────────────────────────────────────────────
+          // 얼굴 수평 중심(코/입 중심선)은 dx≈0 → xWeight≈0
+          // 광대나 턱선 바깥쪽 경계일수록 xWeight → 1.0
+          float faceCenterX = (u_jawPoints[0].x + u_jawPoints[20].x) * 0.5;
+          float dxRaw  = uv.x - faceCenterX; // 부호있는 수평 거리
+          float dxAbs  = abs(dxRaw) * u_aspectRatio;
+          float halfFW = fw * 0.38; // 얼굴 좌우 반폭
+          float xWeight = smoothstep(0.0, halfFW * 0.4, dxAbs); // 중앙=0, 볼=1
+
+          // ── 수평 이동 (uv.y 0 변경) ──────────────────────────────────────
+          // face < 0 → 소두: 볼이 안쪽으로 → UV 바깥쪽 이동해 안쪽 내용 샘플
+          // face > 0 → 대두: 볼이 바깥으로 → UV 안쪽 이동해 바깥 내용 샘플
+          float xShift = sign(dxRaw) * faceStr * yWeight * xWeight * fw * 0.13;
+          uv.x += xShift;
 
           return uv;
       }
