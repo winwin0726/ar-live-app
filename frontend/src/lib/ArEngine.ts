@@ -197,47 +197,37 @@ export class ArEngine {
       }
 
       // ====================================================================
-      // [SOTA] 얼굴 크기 조절 - Radial Boundary Warp
-      // 스냅챗/FaceApp/TikTok 방식: 얼굴 중심 유지, 경계만 밀고당기기
-      // 중심(눈/코/입) 왜곡량=0, 경계(볼/광대/이마/턱) 왜곡량=MAX
+      // 얼굴 크기 조절 - 4-Point Cheek Push 방식
+      // 좌볼/우볼/이마 3개 기준점에서 동시에 부드럽게 밀고 당기기
+      // warpPixel(strength>0) → UV 중심에서 멀어짐 → 이미지가 해당 기준점 쪽으로 수축
+      // face < 0 → 소두(볼을 안으로 밀어 얼굴이 좁아짐)
+      // face > 0 → 대두(볼을 밖으로 밀어 얼굴이 넒어짐)
       // ====================================================================
       vec2 warpFaceScale(vec2 uv, float faceStr) {
           if (abs(faceStr) < 0.001) return uv;
-          if (u_points[3].x < 0.001) return uv;
-          
-          // 얼굴 중심점 (코 + 양눈 평균)
-          vec2 faceCenter = u_points[3];
-          if (u_points[4].x > 0.001 && u_points[5].x > 0.001) {
-              faceCenter = (u_points[3] + u_points[4] + u_points[5]) / 3.0;
-          }
-          faceCenter.x *= u_aspectRatio;
-          
+          if (u_jawPoints[0].x < 0.001) return uv;
+          if (u_jawPoints[20].x < 0.001) return uv;
+
           float fw = getFaceSize();
-          float warpRadius = fw * 0.85;
-          
-          vec2 p = uv; p.x *= u_aspectRatio;
-          float dist = length(p - faceCenter);
-          
-          if (dist > 0.0001 && dist < warpRadius) {
-              // t=0이 중심, t=1이 경계 (반드시 이 방향이어야 함)
-              float t = dist / warpRadius;
-              
-              // 파라볼릭 커브: t=0(중심)→ weight=0, t=0.5(경계)→ weight=MAX, t=1→ weight=0
-              // 수식: 4t(1-t) - 중심과 경계 바깥 모두 0, 얼굴 윤곽에서 최대
-              float weight = 4.0 * t * (1.0 - t);
-              weight = clamp(weight, 0.0, 1.0);
-              
-              vec2 dir = normalize(p - faceCenter);
-              // disp > 0 → 대두(경계 픽셀을 안쪽으로 샘플 → 팽창 효과)
-              // disp < 0 → 소두(경계 픽셀을 바깥으로 샘플 → 수축 효과)
-              float disp = weight * faceStr * fw * 0.20;
-              
-              p -= dir * disp;
-              
-              uv.x = p.x / u_aspectRatio;
-              uv.y = p.y;
-          }
-          
+          float r = fw * 0.55; // 볼~이마를 충분히 덮는 반경
+
+          // 좌측 볼 기준점: 턱선 5번 (왼쪽 광대 아래)
+          vec2 leftCheek = mix(u_jawPoints[3], u_jawPoints[5], 0.5);
+          // 우측 볼 기준점: 턱선 15번 (오른쪽 광대 아래)
+          vec2 rightCheek = mix(u_jawPoints[15], u_jawPoints[17], 0.5);
+          // 이마 기준점: 양 눈 중간에서 위로
+          vec2 forehead = (u_points[4] + u_points[5]) * 0.5;
+          forehead.y -= fw * 0.20; // 이마 위쪽
+
+          // strength 방향:
+          //   소두(faceStr < 0) → 각 기준점 양수(안으로 이미지 당김) → strength = -faceStr (양수)
+          //   대두(faceStr > 0) → 각 기준점 음수(밖으로 이미지 밂) → strength = -faceStr (음수)
+          float s = -faceStr * 0.18;
+
+          uv = warpPixel(uv, leftCheek,  r, s);
+          uv = warpPixel(uv, rightCheek, r, s);
+          uv = warpPixel(uv, forehead,   r * 0.8, s * 0.5); // 이마는 약하게
+
           return uv;
       }
 
