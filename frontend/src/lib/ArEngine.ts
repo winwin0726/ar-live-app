@@ -356,80 +356,48 @@ export class ArEngine {
               bgBlur += texture2D(u_image, uv - t2) * 0.10;
               bgBlur += texture2D(u_image, uv + t3) * 0.10;
               bgBlur += texture2D(u_image, uv - t3) * 0.10;
-
-          // 피부지역 마스크: 얼굴마스크 * 인물확률 (피부색 판별한앗 제거로 마스크노이즈 없애줌)
-          float magicMask = faceMask(uv) * fgProb;
-
-          // 3. 피부톤 보정 (이 세상에서 가장 안전한 단순 뽀새야한기 방식)
-          if (abs(skinAdj) > 0.01 && u_points[3].x > 0.0) {
-              float mask = magicMask;
-              
-              if (mask > 0.01) {
-                  // 밝기 샆게 올리기 + 따뜻한 피치 새~한 색온도 들어가기
-                  vec3 target = color.rgb;
-                  target.r += skinAdj * 0.06; // 탁스진한 붉지 새한 느낌
-                  target.g += skinAdj * 0.04;
-                  target.b -= skinAdj * 0.02;
-                  // 밝기도 올리기 (아주 살짝)
-                  float brightness = 1.0 + skinAdj * 0.10;
-                  target *= brightness;
-                  // 영역내에서 마스크 국소간만 일어나도록 mix
-                  color.rgb = mix(color.rgb, target, mask * 0.7);
-              }
+              bgBlur += texture2D(u_image, uv + t4) * 0.10;
+              bgBlur += texture2D(u_image, uv - t4) * 0.10;
+              color = mix(color, bgBlur, bgProb * (0.5 + bokehAdj * 0.5));
           }
 
-          // 4. 뽀샤시 심화 (True Bilateral Filter 적용)
+          float magicMask = faceMask(uv) * fgProb;
+
+          // 3. 뽀샤시 (요철 제거 최우선 적용 → 피부 결점을 먼저 지우고 색온도 얹힘)
           if (smoothAdj > 0.01 && u_points[3].x > 0.0) {
-              float baseMask = magicMask; // 순수 피부 영역에만 스무딩 적용
+              float baseMask = magicMask;
               
               if (baseMask > 0.01) {
                   float fww = getFaceSize();
                   
-                  // 이목구비 보호 마스크 (눈/코/입/눈썹)
                   vec2 leftEye = u_points[4]; leftEye.x *= u_aspectRatio;
                   vec2 rightEye = u_points[5]; rightEye.x *= u_aspectRatio;
                   vec2 pp = uv; pp.x *= u_aspectRatio;
                   float eyeR = fww * 0.12;
-                  float leftEyeDist = length(pp - leftEye);
-                  float rightEyeDist = length(pp - rightEye);
-                  float eyeGuard = smoothstep(eyeR * 0.5, eyeR, min(leftEyeDist, rightEyeDist));
+                  float eyeGuard = smoothstep(eyeR * 0.5, eyeR, min(length(pp - leftEye), length(pp - rightEye)));
                   
                   vec2 noseP = u_points[3]; noseP.x *= u_aspectRatio;
-                  float noseR = fww * 0.08;
-                  float noseGuard = smoothstep(noseR * 0.3, noseR, length(pp - noseP));
+                  float noseGuard = smoothstep(fww * 0.04, fww * 0.08, length(pp - noseP));
                   
                   vec2 lipP = u_points[6]; lipP.x *= u_aspectRatio;
-                  float lipR = fww * 0.09;
-                  float lipGuard = smoothstep(lipR * 0.3, lipR, length(pp - lipP));
-                  
-                  vec2 browL = leftEye + vec2(0.0, eyeR * 0.8);
-                  vec2 browR = rightEye + vec2(0.0, eyeR * 0.8);
-                  float browGuardL = smoothstep(eyeR * 0.3, eyeR * 0.7, length(pp - browL));
-                  float browGuardR = smoothstep(eyeR * 0.3, eyeR * 0.7, length(pp - browR));
-                  
-                  float featureGuard = eyeGuard * noseGuard * lipGuard * browGuardL * browGuardR;
-                  float sMask = baseMask * featureGuard;
-                  
-                  // === 8-Tap 고효율 True Bilateral Filter (모바일 GPU 최적화) ===
-                  // 모바일 기기에서의 WebGL Context Timeout 현상을 막기 위해 16-Tap을 8-Tap으로 경량화
-                  vec4 blurred = color;
-                  float totalW = 1.0;
+                  float lipGuard = smoothstep(fww * 0.04, fww * 0.09, length(pp - lipP));
+
+                  float sMask = baseMask * eyeGuard * noseGuard * lipGuard;
+
+                  // 8-Tap Bilateral Filter (sigmaFactor 낮춤 → 수염/모공 포함돼 Sharpening 방지)
+                  float sigmaFactor = 8.0;
+                  float r1b = fww * 0.015 * smoothAdj;
+                  float r2b = fww * 0.035 * smoothAdj;
+                  vec2 tx1 = vec2(r1b / u_aspectRatio, 0.0);
+                  vec2 ty1 = vec2(0.0, r1b);
+                  vec2 txy2 = vec2(r2b * 0.707 / u_aspectRatio, r2b * 0.707);
+                  vec2 tyx2 = vec2(r2b * 0.707 / u_aspectRatio, -r2b * 0.707);
+
+                  vec4 blurred = color; float totalW = 1.0;
                   vec3 refC = color.rgb;
-                  
-                  float sigmaFactor = 30.0; 
-                  
-                  float r1 = fww * 0.015 * smoothAdj; // Inner Ring
-                  float r2 = fww * 0.035 * smoothAdj; // Outer Ring
-                  
-                  vec2 tx1 = vec2(r1 / u_aspectRatio, 0.0);
-                  vec2 ty1 = vec2(0.0, r1);
-                  
-                  vec2 txy2 = vec2(r2 * 0.707 / u_aspectRatio, r2 * 0.707);
-                  vec2 tyx2 = vec2(r2 * 0.707 / u_aspectRatio, -r2 * 0.707);
-                  
                   vec4 s; float w; float dSq;
-                  
-                  // Inner Ring (십자 4 Taps)
+
+                  // Inner Ring (수평/수직 4 Taps)
                   float wIn = 0.8;
                   s = texture2D(u_image, uv + tx1); dSq = dot(refC - s.rgb, refC - s.rgb); w = exp(-dSq * sigmaFactor) * wIn; blurred += s * w; totalW += w;
                   s = texture2D(u_image, uv - tx1); dSq = dot(refC - s.rgb, refC - s.rgb); w = exp(-dSq * sigmaFactor) * wIn; blurred += s * w; totalW += w;
@@ -451,7 +419,21 @@ export class ArEngine {
               }
           }
 
+          // 4. 피부톤 보정 (뽀샤시 후 적용 → 색온도 이중 스택 방지)
+          if (abs(skinAdj) > 0.01 && u_points[3].x > 0.0) {
+              float mask = magicMask;
+              if (mask > 0.01) {
+                  float boost = 1.0 + skinAdj * 0.12;
+                  vec3 lit = color.rgb * boost;
+                  // 가장 하얄 영역만 더 하얄게 (add-light: 음영 보호 + 하이라이트 갗안이) 
+                  lit.r += skinAdj * 0.035;
+                  lit.g += skinAdj * 0.025;
+                  color.rgb = mix(color.rgb, clamp(lit, 0.0, 1.0), mask * 0.75);
+              }
+          }
+
           gl_FragColor = color;
+
       }
     `;
 
