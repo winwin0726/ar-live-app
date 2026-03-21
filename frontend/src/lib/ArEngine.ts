@@ -196,44 +196,48 @@ export class ArEngine {
           return uv;
       }
 
+      // X 성분만 이동하는 warpPixel 변형 (수직 스트레칭 완전 차단)
+      void warpPixelX(inout float uvX, vec2 uvFull, vec2 center, float radius, float strength) {
+          if (abs(strength) < 0.001 || center.x < 0.001) return;
+          vec2 delta = uvFull - center;
+          delta.x *= u_aspectRatio;
+          float dist = length(delta);
+          if (dist < radius) {
+              float pull = (radius - dist) / radius;
+              pull = pull * pull * (3.0 - 2.0 * pull); // Cubic Hermite
+              // X 성분만: delta.x(어스팩트 보정됨) * pull * strength
+              uvX += delta.x * pull * strength / u_aspectRatio;
+          }
+      }
+
       // ====================================================================
-      // 얼굴 크기 조절 - X축 전용 Horizontal Gradient Warp (v3)
-      // uv.y 절대 건드리지 않음 → 위아래 스트레칭 원천 차단
-      // 눈·코·입 중심: xWeight≈0 보호 / 광대+턱선: 최대 효과
+      // 얼굴 크기 조절 - warpPixelX 기반 얼굴중심 핀치/벌지 (v4)
+      // uv.y는 절대 건드리지 않음 → 위아래 스트레칭 원천 차단
+      // 얼굴 중심 기준 Pinch(소두)/Bulge(대두): 고무줄 현상 없음
       // ====================================================================
       vec2 warpFaceScale(vec2 uv, float faceStr) {
           if (abs(faceStr) < 0.001) return uv;
-          if (u_jawPoints[0].x < 0.001 || u_jawPoints[10].x < 0.001) return uv;
           if (u_points[3].x < 0.001 || u_points[4].x < 0.001) return uv;
 
           float fw = getFaceSize();
 
-          // ── Y 가중치 (광대+턱선만 효과, 눈·턱끝은 0) ────────────────────
-          float eyeY  = (u_points[4].y + u_points[5].y) * 0.5;
-          float chinY =  u_jawPoints[10].y;
-          float faceH = max(abs(chinY - eyeY), 0.001);
-          // MediaPipe: y=0=화면위, y=1=화면아래 → chinY > eyeY
-          float yRatio = clamp((uv.y - min(eyeY, chinY)) / faceH, 0.0, 1.0);
+          // 얼굴 중심: 코 + 양눈 평균  (이마 쪽 편향 없는 안정적 중심)
+          vec2 fc = (u_points[3] + u_points[4] + u_points[5]) / 3.0;
 
-          // 광대(yRatio 0.20~0.55): max / 턱선(0.55~0.82): 0.65배 / 나머지: 0
-          float cheekW = smoothstep(0.0, 0.22, yRatio) * (1.0 - smoothstep(0.50, 0.62, yRatio));
-          float jawW   = smoothstep(0.48, 0.60, yRatio) * (1.0 - smoothstep(0.80, 1.0,  yRatio)) * 0.65;
-          float yWeight = max(cheekW, jawW);
+          // warpPixelX 방향:
+          //   delta.x = uv.x - fc.x
+          //   strength < 0 → X 이동이 center로 수렴 = 얼굴이 좁아짐(소두)
+          //   strength > 0 → X 이동이 center 밖으로 = 얼굴이 넓어짐(대두)
+          // 호출: warpFaceScale(uv, -face) 이므로
+          //   slider 왼쪽(face<0) → faceStr>0 → s<0 → 소두 ✓
+          //   slider 오른쪽(face>0) → faceStr<0 → s>0 → 대두 ✓
+          float s = -faceStr * 0.06;
 
-          // ── X 가중치 (코 중심선 근처=0, 볼 바깥쪽=1) ────────────────────
-          // 코(nose) X를 중심으로 사용 → jaw 끝점 평균보다 훨씬 안정적
-          float faceCenterX = u_points[3].x;
-          float dxRaw = uv.x - faceCenterX;
-          float dxAbs = abs(dxRaw) * u_aspectRatio;
-          float xWeight = smoothstep(0.0, fw * 0.15, dxAbs); // 중앙=0, 볼=1
+          // 반경: 얼굴 전체를 넉넉히 커버 (0.75 * fw)
+          float r = fw * 0.75;
 
-          // ── 수평 이동 계산 ────────────────────────────────────────────────
-          // UV 방향 원칙:
-          //   소두(faceStr>0): 왼쪽 픽셀(dx<0)→ UV.x 증가(오른쪽 샘플) = 좁아짐
-          //                   오른쪽 픽셀(dx>0)→ UV.x 감소(왼쪽 샘플) = 좁아짐
-          //   → uv.x += -sign(dx) * faceStr * weights
-          float xShift = -sign(dxRaw) * faceStr * yWeight * xWeight * fw * 0.12;
-          uv.x += xShift;
+          // X만 이동 (uv.y 절대 불변)
+          warpPixelX(uv.x, uv, fc, r, s);
 
           return uv;
       }
