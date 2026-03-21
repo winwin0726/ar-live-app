@@ -316,9 +316,21 @@ export class ArEngine {
               smoothAdj = max(smoothAdj, 0.7);
           }
 
-          // 0. 얼굴 전체 크기 조절 (코 중심의 3D 구면 렌즈 왜곡)
-          // 하관만 찌그러지던 땅콩형 부작용을 없애고, 이마와 두상 전체가 똑같은 비율로 축소/팽창되도록 고도화
-          uv = warpPixel(uv, u_points[3], getFaceSize() * 0.70, face * 0.12);
+          // 0. 얼굴 전체 크기 조절 (얼굴 중심 기준 균일 확대/축소)
+          // 코·이마·하관 모두 동일 비율로 스케일 → 찌그러짐/땅콩 현상 완전 제거
+          if (abs(face) > 0.001 && u_points[3].x > 0.001) {
+              // 얼굴 중심 = 코(3) + 양 눈(4,5) + 양 턱선끝(0,20) 평균
+              vec2 fc = (u_points[3] + u_points[4] + u_points[5]) / 3.0;
+              if (u_jawPoints[0].x > 0.001) {
+                  fc = (fc * 3.0 + u_jawPoints[0] + u_jawPoints[20]) / 5.0;
+              }
+              // face < 0 → 축소(소두), face > 0 → 확대(대두)
+              float scaleFactor = 1.0 + face * 0.18;
+              scaleFactor = max(scaleFactor, 0.5); // 최소 50% 이하 방지
+              // 얼굴 중심 기준으로 UV 스케일 적용 (배경은 fgProb로 이후 보호)
+              uv = fc + (uv - fc) / scaleFactor;
+          }
+
 
           // 1. 턱선 전용 RBF 워프 (V라인 슬리밍)
           uv = warpFaceContour(uv, jaw);
