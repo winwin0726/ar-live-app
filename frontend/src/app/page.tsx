@@ -254,16 +254,14 @@ export default function Home() {
       if (peerConnectionRef.current) peerConnectionRef.current.close();
       const iceConfig = {
         iceServers: [
+          { urls: 'stun:stun.relay.metered.ca:80' },
           { urls: 'stun:stun.l.google.com:19302' }, 
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          // Metered 공식 무료 TURN 릴레이 (UDP/TCP/TLS 전 프로토콜 커버)
-          { urls: 'turn:a.relay.metered.ca:80', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
-          { urls: 'turn:a.relay.metered.ca:80?transport=tcp', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
-          { urls: 'turn:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
-          { urls: 'turns:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          // Metered 공식 TURN 릴레이 (사용자 실제 인증키)
+          { urls: 'turn:global.relay.metered.ca:80', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
+          { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
+          { urls: 'turn:global.relay.metered.ca:443', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
+          { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
         ],
         iceCandidatePoolSize: 10,
       };
@@ -302,16 +300,14 @@ export default function Home() {
       if (peerConnectionRef.current) peerConnectionRef.current.close();
       const iceConfig = {
         iceServers: [
+          { urls: 'stun:stun.relay.metered.ca:80' },
           { urls: 'stun:stun.l.google.com:19302' }, 
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          // Metered 공식 무료 TURN 릴레이 (UDP/TCP/TLS 전 프로토콜 커버)
-          { urls: 'turn:a.relay.metered.ca:80', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
-          { urls: 'turn:a.relay.metered.ca:80?transport=tcp', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
-          { urls: 'turn:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
-          { urls: 'turns:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          // Metered 공식 TURN 릴레이 (사용자 실제 인증키)
+          { urls: 'turn:global.relay.metered.ca:80', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
+          { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
+          { urls: 'turn:global.relay.metered.ca:443', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
+          { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: '5e8dd7158aedf2587096a227', credential: 'KE8+BFkaaZc0icAQ' },
         ],
         iceCandidatePoolSize: 10,
       };
