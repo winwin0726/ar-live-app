@@ -33,6 +33,8 @@ export default function Home() {
   const [isMobile, setIsMobile] = useState(true);
   const [userRole, setUserRole] = useState<'broadcaster' | 'viewer' | null>(null);
   const userRoleRef = useRef<'broadcaster' | 'viewer' | null>(null);
+  const pendingOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
+  const initViewerPCRef = useRef<((offer: RTCSessionDescriptionInit) => void) | null>(null);
   
   useEffect(() => {
     setMounted(true);
@@ -41,6 +43,12 @@ export default function Home() {
 
   useEffect(() => {
     userRoleRef.current = userRole;
+    // Role이 'viewer'로 설정되었고, 대기 중인 offer가 있으면 즉시 처리
+    if (userRole === 'viewer' && pendingOfferRef.current && initViewerPCRef.current) {
+      console.log('[WebRTC] 대기 중이던 offer를 viewer role 설정 후 즉시 처리');
+      initViewerPCRef.current(pendingOfferRef.current);
+      pendingOfferRef.current = null;
+    }
   }, [userRole]);
   
   const [cameraActive, setCameraActive] = useState(true);
@@ -439,9 +447,19 @@ export default function Home() {
       if (initMediaRef.current) initMediaRef.current(data?.quality || 'HD', data?.facing || 'user');
     });
 
+    // initViewerPC를 ref에 저장 (role 변경 시 대기 중 offer 처리용)
+    initViewerPCRef.current = initViewerPC;
+
     // 3. WebRTC 시그널링 이벤트 리스너
     newSocket.on('offer', (offer) => {
-      if (userRoleRef.current === 'viewer') initViewerPC(offer); // 시청자만 offer 수신
+      if (userRoleRef.current === 'viewer') {
+        initViewerPC(offer); // 시청자 확정 → 즉시 처리
+      } else if (userRoleRef.current === null) {
+        // 아직 역할 미정 → offer를 임시 저장 (나중에 viewer로 설정되면 처리)
+        console.log('[WebRTC] offer 수신했으나 role 미정 → 임시 저장');
+        pendingOfferRef.current = offer;
+      }
+      // broadcaster는 자기 offer를 돌려받을 일이 없으므로 무시
     });
 
     newSocket.on('answer', async (answer) => {
