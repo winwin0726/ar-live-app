@@ -272,7 +272,10 @@ export default function Home() {
     socketRef.current = newSocket;
 
     const initBroadcasterPC = (stream: MediaStream, qualityStr: string) => {
-      if (peerConnectionRef.current) peerConnectionRef.current.close();
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+      }
+      iceCandidateQueue.current = []; // [핵심 해결] 새 연결 시 기존 쓸모없는 ICE 후보들 깨끗이 지우기
       const iceConfig = {
         iceServers: [
           { urls: 'stun:stun.relay.metered.ca:80' },
@@ -318,7 +321,10 @@ export default function Home() {
     };
 
     const initViewerPC = async (offer: RTCSessionDescriptionInit) => {
-      if (peerConnectionRef.current) peerConnectionRef.current.close();
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+      }
+      iceCandidateQueue.current = []; // [핵심 해결] 시청자쪽도 초기화 시 이전 쓰레기 큐 지우기
       const iceConfig = {
         iceServers: [
           { urls: 'stun:stun.relay.metered.ca:80' },
