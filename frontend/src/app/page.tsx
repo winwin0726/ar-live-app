@@ -495,13 +495,11 @@ export default function Home() {
     newSocket.on("receiveMessage", (data: any) => {
       // 신규 시청자가 접속하거나 새로고침("다시 접근")하여 화면을 요청할 때
       if (data.sender === '시스템_viewer' && userRoleRef.current === 'broadcaster') {
-        if (peerConnectionRef.current && localStreamRef.current) {
-          // [핵심 버그 수정 (제1원칙)] 모바일 기기에서 기존 WebRTC 연결을 부수고 새로 만들면 카메라 트랙이 먹통(블랙)이 되는 치명적 WebKit 버그 방어.
-          peerConnectionRef.current.createOffer({ iceRestart: true })
-            .then(offer => peerConnectionRef.current!.setLocalDescription(offer))
-            .then(() => newSocket.emit('offer', peerConnectionRef.current!.localDescription))
-            .catch(e => console.error("ICE Restart Offer Error:", e));
-        } else if (localStreamRef.current) {
+        if (localStreamRef.current) {
+          // [핵심 문제 해결 (제1법칙)] PC는 완전 새 RTCPeerConnection을 만드는데,
+          // 모바일 쪽에서 기존 RTCPeerConnection을 재사용(iceRestart)하면 상태 불일치(Mismatch) 붕괴 발생!
+          // 해결책: 시청자가 접속하면 모바일 쪽도 연결을 완전히 파괴하고 깨끗한 리셋(initBroadcasterPC) 수행.
+          console.log('[WebRTC] 시청자 접속 감지 - 방송자쪽 WebRTC 연결 완전 초기화(Reset) 및 새 Offer 발송');
           initBroadcasterPC(localStreamRef.current, videoQuality);
         }
         return;
