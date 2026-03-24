@@ -194,17 +194,21 @@ export default function Home() {
     if (remoteStream) {
       if (videoRef.current && videoRef.current.srcObject !== remoteStream) {
         videoRef.current.srcObject = remoteStream;
+        videoRef.current.play().catch(e => console.warn("Video mount play error:", e));
       }
       if (previewVideoRef.current && previewVideoRef.current.srcObject !== remoteStream) {
         previewVideoRef.current.srcObject = remoteStream;
+        previewVideoRef.current.play().catch(e => console.warn("Preview mount play error:", e));
       }
     } else if (localStreamRef.current) {
       // 송출자 본인의 화면인 경우
       if (videoRef.current && videoRef.current.srcObject !== localStreamRef.current) {
         videoRef.current.srcObject = localStreamRef.current;
+        videoRef.current.play().catch(e => console.warn("Local video mount play error:", e));
       }
       if (previewVideoRef.current && previewVideoRef.current.srcObject !== localStreamRef.current) {
         previewVideoRef.current.srcObject = localStreamRef.current;
+        previewVideoRef.current.play().catch(e => console.warn("Local preview mount play error:", e));
       }
     }
   }, [remoteStream, showBeautyPreview, isLiveStarted]);
