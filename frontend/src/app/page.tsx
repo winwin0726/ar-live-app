@@ -252,15 +252,22 @@ export default function Home() {
 
     const initBroadcasterPC = (stream: MediaStream, qualityStr: string) => {
       if (peerConnectionRef.current) peerConnectionRef.current.close();
-      const pc = new RTCPeerConnection({ 
+      const iceConfig = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' }, 
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-        ] 
-      });
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
+          // Metered 공식 무료 TURN 릴레이 (UDP/TCP/TLS 전 프로토콜 커버)
+          { urls: 'turn:a.relay.metered.ca:80', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          { urls: 'turn:a.relay.metered.ca:80?transport=tcp', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          { urls: 'turn:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          { urls: 'turns:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+        ],
+        iceCandidatePoolSize: 10,
+      };
+      const pc = new RTCPeerConnection(iceConfig);
       peerConnectionRef.current = pc;
       setPcInstance(pc);
 
@@ -293,15 +300,22 @@ export default function Home() {
 
     const initViewerPC = async (offer: RTCSessionDescriptionInit) => {
       if (peerConnectionRef.current) peerConnectionRef.current.close();
-      const pc = new RTCPeerConnection({ 
+      const iceConfig = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' }, 
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-        ] 
-      });
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
+          // Metered 공식 무료 TURN 릴레이 (UDP/TCP/TLS 전 프로토콜 커버)
+          { urls: 'turn:a.relay.metered.ca:80', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          { urls: 'turn:a.relay.metered.ca:80?transport=tcp', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          { urls: 'turn:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+          { urls: 'turns:a.relay.metered.ca:443', username: 'e8dd65b92c0e139641c88ed0', credential: 'uWdJjTJzEjFbpJxL' },
+        ],
+        iceCandidatePoolSize: 10,
+      };
+      const pc = new RTCPeerConnection(iceConfig);
       peerConnectionRef.current = pc;
       setPcInstance(pc);
 
