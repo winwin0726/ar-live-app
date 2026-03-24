@@ -341,14 +341,29 @@ export default function Home() {
       };
 
       pc.ontrack = (event) => {
-        setRemoteStream(event.streams[0]);
-        if (videoRef.current) {
-          videoRef.current.srcObject = event.streams[0];
-          videoRef.current.play().catch(e => console.warn(e));
+        const stream = event.streams[0];
+        setRemoteStream(stream);
+        
+        // [방어 코드] 동일한 스트림이 이미 할당되어 있으면 무시하여 AbortError 방지
+        if (videoRef.current && videoRef.current.srcObject !== stream) {
+          videoRef.current.srcObject = stream;
+          // 비동기 play() 요청 안전 처리
+          const playPromise = videoRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(e => {
+              if (e.name !== 'AbortError') console.warn("Video Play Error:", e);
+            });
+          }
         }
-        if (previewVideoRef.current) {
-          previewVideoRef.current.srcObject = event.streams[0];
-          previewVideoRef.current.play().catch(e => console.warn(e));
+        
+        if (previewVideoRef.current && previewVideoRef.current.srcObject !== stream) {
+          previewVideoRef.current.srcObject = stream;
+          const playPromise = previewVideoRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(e => {
+              if (e.name !== 'AbortError') console.warn("Preview Play Error:", e);
+            });
+          }
         }
         setCameraActive(true); // 통신 성공 시 UI 복구
       };
