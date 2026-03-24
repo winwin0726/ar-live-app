@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ['10.0.0.140', 'loca.lt', 'localhost', 'trycloudflare.com', 'skip-amended-allows-generating.trycloudflare.com', 'gadgets-commercial-presently-yields.trycloudflare.com', 'based-address-judgment-cayman.trycloudflare.com', 'struggle-ambien-arctic-fall.trycloudflare.com'], 
+  allowedDevOrigins: ['192.168.31.105', '10.0.0.140', 'loca.lt', 'localhost', 'trycloudflare.com', 'ngrok-free.dev', 'photoheliographic-unexigible-latanya.ngrok-free.dev'], 
   skipTrailingSlashRedirect: true,
   async rewrites() {
     return [

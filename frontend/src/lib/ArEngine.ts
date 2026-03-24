@@ -29,6 +29,38 @@ export class ArEngine {
   private segTexture: WebGLTexture | null = null;
   private segMaskBuffer: Uint8Array | null = null;
 
+  // Hair styling overlay
+  private hairGender: 'M' | 'F' | null = null;
+  private hairIndex: number = -1;
+  private hairImage: HTMLImageElement | null = null;
+  private hairImageCache: Map<string, HTMLImageElement> = new Map();
+  // Last known face landmarks for hair overlay (raw, not flipped)
+  private lastFaceMarks: any[] | null = null;
+
+  setHairStyle(gender: 'M' | 'F', index: number) {
+    this.hairGender = gender;
+    this.hairIndex = index;
+    const key = `${gender}_${index}`;
+    if (this.hairImageCache.has(key)) {
+      this.hairImage = this.hairImageCache.get(key)!;
+    } else {
+      const img = new Image();
+      const g = gender === 'M' ? 'm' : 'f';
+      const n = String(index + 1).padStart(2, '0');
+      img.src = `/hair/hair_${g}_${n}.png`;
+      img.onload = () => {
+        this.hairImageCache.set(key, img);
+        this.hairImage = img;
+      };
+    }
+  }
+
+  clearHairStyle() {
+    this.hairGender = null;
+    this.hairIndex = -1;
+    this.hairImage = null;
+  }
+
   // 시간적 안정화 (Temporal Stabilization) 버퍼
   private prevPointsData: Float32Array | null = null;
   private prevJawArr: Float32Array | null = null;
@@ -557,6 +589,9 @@ export class ArEngine {
     this.hiddenVideo.height = this.processingCanvas.height;
 
     this.initWebGL(this.processingCanvas.width, this.processingCanvas.height);
+    if (!this.gl || !this.canvasCtx) {
+      throw new Error("웹 브라우저의 WebGL 또는 Canvas 컨텍스트 초기화에 실패했습니다. 하드웨어 가속이 꺼져 있거나 그래픽 카드 충돌일 수 있습니다.");
+    }
 
     const canvasStream = this.processingCanvas.captureStream(30);
     
@@ -577,8 +612,15 @@ export class ArEngine {
     let lastVideoTime = -1;
 
     const loop = () => {
-      if (this.hiddenVideo && this.processingCanvas && this.canvasCtx && this.isInitialized && this.gl) {
-        if (this.hiddenVideo.readyState >= 2 && this.hiddenVideo.currentTime !== lastVideoTime) {
+      if (this.hiddenVideo && this.processingCanvas && this.canvasCtx && this.gl) {
+        if (!this.isInitialized) {
+          // AR 엔진 비동기 로딩 중(초기화 전)에는 블랙스크린이 뜨지 않도록 원본 카메라를 그대로 캔버스에 복사
+          this.canvasCtx.save();
+          this.canvasCtx.translate(this.processingCanvas.width, 0);
+          this.canvasCtx.scale(-1, 1);
+          this.canvasCtx.drawImage(this.hiddenVideo, 0, 0, this.processingCanvas.width, this.processingCanvas.height);
+          this.canvasCtx.restore();
+        } else if (this.hiddenVideo.readyState >= 2 && this.hiddenVideo.currentTime !== lastVideoTime) {
            lastVideoTime = this.hiddenVideo.currentTime;
            const nowInMs = performance.now();
            
@@ -752,6 +794,67 @@ export class ArEngine {
                  ctx.arc(mark.x * this.processingCanvas.width, mark.y * this.processingCanvas.height, 4.0, 0, 2 * Math.PI);
                  ctx.fill();
               }
+           }
+
+           // ── 헤어 스타일 오버레이 렌더링 ─────────────────────────────────
+           if (this.hairImage && faceResult && faceResult.faceLandmarks.length > 0) {
+              const marks = faceResult.faceLandmarks[0];
+              const W = this.processingCanvas.width;
+              const H = this.processingCanvas.height;
+
+              // 얼굴 기준점: 좌귀(234), 우귀(454), 이마 최상단(10)
+              const lEar  = marks[234]; // 왼쪽 (화면 기준)
+              const rEar  = marks[454]; // 오른쪽 (화면 기준)
+              const top   = marks[10];  // 이마 최상단
+              const chin  = marks[152]; // 턱 끝
+
+              // 픽셀 좌표 변환
+              const lx = lEar.x * W,  ly = lEar.y * H;
+              const rx = rEar.x * W,  ry = rEar.y * H;
+              const tx = top.x  * W,  ty = top.y * H;
+              const cx = chin.x * W,  cy = chin.y * H;
+
+              // 얼굴 너비 및 높이 (회전 고려 2D 직선거리)
+              const faceWidth = Math.sqrt((rx-lx)**2 + (ry-ly)**2);
+              const faceHeight = Math.sqrt((cx-tx)**2 + (cy-ty)**2);
+
+              // 3D Yaw(좌우 고개 돌림) 시 faceWidth가 급격히 축소되는 버그 방지를 위해
+              // faceHeight 기반의 안정적인 Width(비율 보정)와 기존 Width 중 큰 값을 채택
+              const stableFaceWidth = Math.max(faceWidth, faceHeight / 1.35);
+
+              // 남/녀 헤어 이미지 특성에 따른 너비 배율 및 이마(Hairline) 앵커 포인트 지정
+              // 여자는 머리가 길어 세로가 길기 때문에 너비를 더 크게 주고, 최상단(0.0)으로부터 22% 지점을 이마에 맞춤
+              // 남자는 머리가 짧아 35% 지점을 이마에 맞춤
+              const widthMultiplier = this.hairGender === 'M' ? 1.45 : 1.65;
+              const anchorYRatio = this.hairGender === 'M' ? 0.35 : 0.22;
+
+              const hairW = stableFaceWidth * widthMultiplier;
+              const hairH = hairW * (this.hairImage.naturalHeight / this.hairImage.naturalWidth);
+
+              // 얼굴 이마(top) 좌표를 센터 원점(0,0)으로 이동 후 회전시키기 위한 기준점
+              // X축은 양 귀의 중앙, Y축은 이마 최상단(top) 사용
+              const faceCenter_X = (lx + rx) / 2;
+              const faceCenter_Y = ty;
+
+              // 고개 기울기 각도 (Roll)
+              const ang = Math.atan2(ry - ly, rx - lx);
+
+              ctx.save();
+              ctx.translate(faceCenter_X, faceCenter_Y); // 원점을 이마 중앙으로 이동
+              ctx.rotate(ang); // 얼굴 각도만큼 회전
+              ctx.globalAlpha = 0.95;
+              // multiply 블렌딩 대신 보통 합성 사용 (헤어 자체 투명도 활용)
+              ctx.globalCompositeOperation = 'source-over';
+              
+              // 이마(0,0) 자리에 이미지의 anchorY 지정 픽셀이 오도록 Y 좌표 이동
+              ctx.drawImage(
+                this.hairImage,
+                -hairW / 2, -hairH * anchorYRatio,
+                hairW, hairH
+              );
+              ctx.restore();
+              ctx.globalAlpha = 1.0;
+              ctx.globalCompositeOperation = 'source-over';
            }
         }
       }

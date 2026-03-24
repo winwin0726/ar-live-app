@@ -3,6 +3,12 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // [Phase 1] 클라우드 이주를 위한 완벽한 CORS 개방 (Vercel 프론트에서 Render 백엔드로 요청 가능)
+  app.enableCors({
+    origin: '*',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
+  });
   await app.listen(process.env.PORT ?? 3001, '0.0.0.0');
 }
 bootstrap();

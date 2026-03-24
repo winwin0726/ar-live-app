@@ -1,7 +1,7 @@
 /* eslint-disable */
 "use client";
 
-import { useEffect, useState, useRef, FormEvent } from "react";
+import { useEffect, useState, useRef, FormEvent, useCallback } from "react";
 import { 
   Play, Image as ImageIcon, Send, X, Mic, MicOff, Camera, MapPin, 
   Search, ChevronRight, Wand2, ArrowLeft, CameraOff, Clock, User, 
@@ -10,6 +10,7 @@ import {
 import { io, Socket } from "socket.io-client";
 import { PRODUCT_CATEGORIES } from "../lib/categories";
 import { arEngineInstance } from "@/lib/ArEngine";
+import { useAutoHealAgents } from "@/lib/agents/useAutoHealAgents";
 
 interface ChatMessage {
   id: string;
@@ -28,24 +29,60 @@ export default function Home() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
   
-  // Hydration Error 방지 (Client-Side Rendering 강제)
   const [mounted, setMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(true);
+  const [userRole, setUserRole] = useState<'broadcaster' | 'viewer' | null>(null);
+  const userRoleRef = useRef<'broadcaster' | 'viewer' | null>(null);
   
   useEffect(() => {
     setMounted(true);
     setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
   }, []);
+
+  useEffect(() => {
+    userRoleRef.current = userRole;
+  }, [userRole]);
   
   const [cameraActive, setCameraActive] = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  
+  // WebRTC & Media States for Auto-Heal Hook Dependency Tracking
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const [pcInstance, setPcInstance] = useState<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const [streamInstance, setStreamInstance] = useState<MediaStream | null>(null);
+  
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
   const audioQueueRef = useRef<string[]>([]);
   const isPlayingRef = useRef<boolean>(false);
+  const initMediaRef = useRef<((qualityOverride?: string, facingOverride?: string) => Promise<void>) | null>(null);
+
+  // Auto-Heal Diagnostics Harness
+  const handleWebRTCRestart = useCallback(() => {
+    if (initMediaRef.current) {
+      console.log('🔄 [Harness] WebRTC ICE Restart Triggered');
+      initMediaRef.current(); // Reboot pipeline
+    }
+  }, []);
+
+  const handleMediaRestart = useCallback(() => {
+    if (initMediaRef.current) {
+      console.log('🔄 [Harness] Camera Sensor Restart Triggered');
+      initMediaRef.current();
+    }
+  }, []);
+
+  const { harnessState } = useAutoHealAgents({
+    socket,
+    peerConnection: pcInstance,
+    localStream: streamInstance,
+    userRole,
+    onWebRTCRestartRequest: handleWebRTCRestart,
+    onMediaRestartRequest: handleMediaRestart
+  });
+  
   
   // 녹음(STT) 상태
   const [isListening, setIsListening] = useState(false);
@@ -155,7 +192,7 @@ export default function Home() {
     }
   }, [remoteStream, showBeautyPreview, isLiveStarted]);
 
-  const initMediaRef = useRef<((qualityOverride?: string, facingOverride?: string) => Promise<void>) | null>(null);
+  // Removed duplicate initMediaRef declaration here
   const liveStartTimeRef = useRef<number | null>(null);
 
   // 0. 현재 시간 및 동접자 시뮬레이션
@@ -207,8 +244,9 @@ export default function Home() {
   }, [isLiveStarted]);
 
   useEffect(() => {
-    // 1. 소켓 연결 (Next.js Proxy를 경유해 단일 포트로 모든 궤도 통합 통신)
-    const newSocket = io({ path: '/socket.io' }); 
+    // 1. 소켓 연결 (클라우드 환경에서는 외부 백엔드 URL, 로컬에서는 Proxy 경유)
+    const backendUrl = process.env.NEXT_PUBLIC_SOCKET_URL || '';
+    const newSocket = io(backendUrl, { path: '/socket.io' }); 
     setSocket(newSocket);
     socketRef.current = newSocket;
 
@@ -224,6 +262,7 @@ export default function Home() {
         ] 
       });
       peerConnectionRef.current = pc;
+      setPcInstance(pc);
 
       pc.oniceconnectionstatechange = () => setWebrtcState(`Broadcaster ICE: ${pc.iceConnectionState}`);
 
@@ -264,6 +303,7 @@ export default function Home() {
         ] 
       });
       peerConnectionRef.current = pc;
+      setPcInstance(pc);
 
       pc.oniceconnectionstatechange = () => {
         setWebrtcState(`Viewer ICE: ${pc.iceConnectionState}`);
@@ -301,67 +341,65 @@ export default function Home() {
       newSocket.emit('answer', pc.localDescription);
     };
 
-    // 2. 카메라/마이크 권한 요청 및 역할 분배 (모바일=송출자, PC=시청자)
+    // 2. 카메라/마이크 권한 요청 및 역할 분배
     const initMedia = async (qualityOverride?: string, facingOverride?: string) => {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      console.log(`📡 initMedia called. Role: ${userRoleRef.current}`);
+      
+      if (userRoleRef.current === 'viewer') {
+        setCameraActive(false);
+        if (socketRef.current) socketRef.current.emit('sendMessage', { sender: '시스템_viewer', type: 'system', text: '시청자 접속' });
+        console.log("PC 시청자 뷰: 모바일 영상 수신 대기 중...");
+        return;
+      }
 
-      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error("❌ getUserMedia is not supported in this browser (Likely HTTP instead of HTTPS)");
+        alert("이 브라우저/환경에서는 카메라 호출을 지원하지 않습니다. (https 접속 필요)");
+        return;
+      }
+
       const activeQuality = qualityOverride || videoQuality;
       const activeFacing = facingOverride || cameraFacing;
 
-      if (isMobileDevice) {
-        // [버그 수정 2] 모바일이 이미 방송 중일 때 들어온 시청자를 위해, 스트림을 죽이지 않고 리스타트만 전송
+      if (userRoleRef.current === 'broadcaster') {
         if (localStreamRef.current && peerConnectionRef.current) {
           peerConnectionRef.current.createOffer({ iceRestart: true })
             .then(offer => peerConnectionRef.current!.setLocalDescription(offer))
             .then(() => newSocket.emit('offer', peerConnectionRef.current!.localDescription))
             .catch(e => console.error("ICE Restart Error from initMedia:", e));
           
-          // [버그 수정 4] AR 프리뷰 뷰에서 Live 화면으로 넘어오며 `<video ref>`가 새로 마운트되었을 때,
-          // 기존에 점유해둔 localStreamRef 카메라 스트림을 새 비디오 태그에 다시 주입해주어야 블랙스크린이 뜨지 않습니다.
           if (videoRef.current && videoRef.current.srcObject !== localStreamRef.current) {
             videoRef.current.srcObject = localStreamRef.current;
           }
           if (previewVideoRef.current && previewVideoRef.current.srcObject !== localStreamRef.current) {
             previewVideoRef.current.srcObject = localStreamRef.current;
           }
-
           return;
         }
 
-        // 최초 모바일 송출자 연결
         try {
-          // 4:3 비율로 요청하여 카메라 센서 크롭 최소화 → 화각 1.5배 확보
           const constraints: MediaTrackConstraints = { facingMode: activeFacing };
-          
           if (activeQuality === 'SD') {
              constraints.width = { ideal: 640 }; constraints.height = { ideal: 480 }; 
           } else if (activeQuality === 'FHD') {
              constraints.width = { ideal: 1440 }; constraints.height = { ideal: 1080 }; 
-          } else { // HD (기본값)
+          } else { 
              constraints.width = { ideal: 960 }; constraints.height = { ideal: 720 }; 
           }
 
           let stream: MediaStream;
           try {
-            stream = await navigator.mediaDevices.getUserMedia({ 
-              video: constraints, 
-              audio: true 
-            });
+            stream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: true });
           } catch (hwError) {
             console.warn("고급 화질 제약조건 실패, 브라우저 기본 카메라로 폴백합니다.", hwError);
-            stream = await navigator.mediaDevices.getUserMedia({ 
-              video: true, 
-              audio: true 
-            });
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
           }
           
-          // [Phase 12] MediaPipe AR 엔진에 원본 스트림을 관통시켜 처리된 Canvas 스트림으로 변환
+          // [Phase 12] MediaPipe AR 엔진에 원본 스트림 관통
           const processedStream = arEngineInstance.setupProcessingPipeline(stream);
-          
           localStreamRef.current = processedStream; 
-          // 재렌더링 트리거를 하여 스트림이 할당되게 함 (useEffect에서 처리)
-          setRemoteStream(null); // 혹시 남아있는 리모트 제거
+          setStreamInstance(processedStream);
+          setRemoteStream(null); 
           
           if (videoRef.current) {
              videoRef.current.srcObject = processedStream;
@@ -375,24 +413,10 @@ export default function Home() {
           setCameraActive(true);
           initBroadcasterPC(processedStream, activeQuality); // 접속 즉시 방송 시작 (offer 생성)
         } catch (err: any) {
-          console.error(err);
+          console.error("❌ 카메라 접근 오류:", err);
+          alert("카메라 접근에 실패했습니다. 권한을 확인해주세요.");
           setCameraActive(false);
         }
-      } else {
-        // PC (시청자: 마이크만 획득)
-        setCameraActive(false); // 영상 수신 전까지는 꺼짐 표시
-        try {
-          // 이미 마이크 권한을 받은 상태면 다시 묻지 않음
-          if (!localStreamRef.current) {
-            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            localStreamRef.current = audioStream;
-            console.log("PC 뷰어 마이크 준비 완료");
-          }
-        } catch (audioErr) {
-          console.error(audioErr);
-        }
-        
-        // [버그 수정 1] PC가 불필요하게 두 번 request_offer를 쏘면서 화면이 0.5초만에 다시 끊어지던 레이스컨디션 제거
       }
     };
     initMediaRef.current = initMedia; // 초기화 함수를 ref에 저장 (모달에서 수동으로 시작하기 위함)
@@ -407,13 +431,11 @@ export default function Home() {
 
     // 3. WebRTC 시그널링 이벤트 리스너
     newSocket.on('offer', (offer) => {
-      const isBroadcaster = localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0;
-      if (!isBroadcaster) initViewerPC(offer); // 화상이 없는 시청자(PC)만 offer를 수신
+      if (userRoleRef.current === 'viewer') initViewerPC(offer); // 시청자만 offer 수신
     });
 
     newSocket.on('answer', async (answer) => {
-      const isBroadcaster = localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0;
-      if (peerConnectionRef.current && isBroadcaster) {
+      if (peerConnectionRef.current && userRoleRef.current === 'broadcaster') {
         if (peerConnectionRef.current.signalingState === 'have-local-offer') {
           await peerConnectionRef.current.setRemoteDescription(answer).catch(e => console.error(e));
           iceCandidateQueue.current.forEach(c => {
@@ -425,7 +447,6 @@ export default function Home() {
     });
 
     newSocket.on('ice-candidate', async (candidate) => {
-      // 아직 RTCPeerConnection이 생성 안 되었거나 RemoteDescription이 없으면 큐에 안전하게 적재
       if (peerConnectionRef.current && peerConnectionRef.current.remoteDescription) {
         await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.error(e));
       } else {
@@ -436,17 +457,15 @@ export default function Home() {
     // 4. 채팅 및 보이스 재생 이벤트
     newSocket.on("receiveMessage", (data: any) => {
       // 신규 시청자가 접속하거나 새로고침("다시 접근")하여 화면을 요청할 때
-      const isBroadcaster = localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0;
-      if (data.sender === '시스템_viewer' && isBroadcaster) {
-        if (peerConnectionRef.current) {
+      if (data.sender === '시스템_viewer' && userRoleRef.current === 'broadcaster') {
+        if (peerConnectionRef.current && localStreamRef.current) {
           // [핵심 버그 수정 (제1원칙)] 모바일 기기에서 기존 WebRTC 연결을 부수고 새로 만들면 카메라 트랙이 먹통(블랙)이 되는 치명적 WebKit 버그 방어.
-          // 연결을 부수지 않고 ICE Restart만 트리거하여 새로 들어온 시청자에게 기존 파이프라인 수로만 돌려줌.
           peerConnectionRef.current.createOffer({ iceRestart: true })
             .then(offer => peerConnectionRef.current!.setLocalDescription(offer))
             .then(() => newSocket.emit('offer', peerConnectionRef.current!.localDescription))
             .catch(e => console.error("ICE Restart Offer Error:", e));
-        } else {
-          initBroadcasterPC(localStreamRef.current!, videoQuality);
+        } else if (localStreamRef.current) {
+          initBroadcasterPC(localStreamRef.current, videoQuality);
         }
         return;
       }
@@ -723,14 +742,31 @@ export default function Home() {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-gray-950 font-sans p-4">
         <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2rem] p-8 shadow-2xl flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-500">
-          {!isMobile ? (
-            <div className="flex flex-col items-center justify-center py-10 gap-4">
-              <Clock size={48} className="text-zinc-500 animate-pulse" />
-              <h1 className="text-xl font-bold text-white text-center">라이브 대기 중...</h1>
-              <p className="text-zinc-400 text-sm text-center">
-                송출자가 아직 라방을 시작하지 않았습니다.<br/>
-                <span className="text-pink-400 font-bold mt-2 block">모바일(스마트폰) 기기로 접속하여 방송을 시작해주세요!</span>
+          {userRole === null ? (
+            <div className="flex flex-col items-center justify-center py-6 gap-6">
+              <h1 className="text-2xl font-bold text-white text-center tracking-tight">당신의 역할을 선택하세요</h1>
+              <p className="text-zinc-400 text-sm text-center leading-relaxed">
+                모바일 기기는 가급적 <span className="text-pink-400 font-bold">방송하기</span>를,<br/>
+                PC 환경은 <span className="text-blue-400 font-bold">시청하기</span>를 권장합니다.
               </p>
+              <div className="flex flex-col gap-4 w-full mt-4">
+                <button 
+                  onClick={() => setUserRole('broadcaster')}
+                  className="w-full py-5 rounded-xl font-bold text-lg bg-pink-600 hover:bg-pink-500 text-white shadow-lg transition-transform hover:-translate-y-1"
+                >
+                  📱 방송하기 (Broadcaster)
+                </button>
+                <button 
+                  onClick={async () => {
+                    setUserRole('viewer');
+                    setIsLiveStarted(true);
+                    if (initMediaRef.current) await initMediaRef.current();
+                  }}
+                  className="w-full py-5 rounded-xl font-bold text-lg bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-transform hover:-translate-y-1"
+                >
+                  💻 시청하기 (Viewer)
+                </button>
+              </div>
             </div>
           ) : (
             <>
@@ -952,6 +988,41 @@ export default function Home() {
       {/* 9:16 Mobile Simulator Container */}
       <main className="relative flex h-full w-full max-w-[500px] flex-col overflow-hidden bg-zinc-900 text-white sm:h-[90vh] sm:rounded-[2.5rem] sm:border-[12px] sm:border-zinc-800 sm:shadow-2xl">
         
+        {/* Agent Diagnostics Panel */}
+        <div className="absolute top-4 left-4 z-[100] bg-black/60 backdrop-blur-md rounded-xl p-3 border border-pink-500/30 shadow-[0_0_15px_rgba(236,72,153,0.2)] flex flex-col gap-2 w-48 transition-all hover:bg-black/80 pointer-events-none">
+          <div className="flex items-center gap-2 border-b border-pink-500/30 pb-2 mb-1">
+            <span className="animate-pulse">🤖</span>
+            <span className="text-[10px] font-bold text-pink-400 tracking-wider">에이전트 감시망</span>
+          </div>
+          
+          <div className="flex flex-col gap-1.5 text-[9px]">
+            <div className="flex justify-between items-center">
+              <span className="text-zinc-400">📡 통신망</span>
+              <span className={`font-bold ${harnessState.socketAgent.status === 'healthy' ? 'text-green-400' : 'text-red-400 animate-pulse'}`}>
+                {harnessState.socketAgent.status === 'healthy' ? '🟢 연결됨' : '🔴 복구 중...'}
+              </span>
+            </div>
+            
+            <div className="flex justify-between items-center">
+              <span className="text-zinc-400">🎥 미디어 센서</span>
+              <span className={`font-bold ${harnessState.mediaAgent.status === 'healthy' ? 'text-green-400' : harnessState.mediaAgent.status === 'warning' ? 'text-yellow-400' : 'text-red-400 animate-pulse'}`}>
+                {harnessState.mediaAgent.status === 'healthy' ? '🟢 정상' : harnessState.mediaAgent.status === 'warning' ? '🟡 대기중' : '🔴 리셋가동'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-zinc-400">⚡ P2P 터널</span>
+              <span className={`font-bold ${harnessState.webrtcAgent.status === 'healthy' ? 'text-green-400' : harnessState.webrtcAgent.status === 'warning' ? 'text-yellow-400' : 'text-red-400 animate-pulse'}`}>
+                {harnessState.webrtcAgent.status === 'healthy' ? '🟢 정상' : harnessState.webrtcAgent.status === 'warning' ? '🟡 협상중' : '🔴 Restart 🚀'}
+              </span>
+            </div>
+          </div>
+          
+          <div className="mt-1 pt-2 border-t border-zinc-700/50">
+            <p className="text-[8px] text-zinc-500 leading-tight">단절 탐지 시 1초 내 즉각 우회 복구합니다.</p>
+          </div>
+        </div>
+
         {/* Background / Real Webcam Video Stream */}
         <div className="absolute inset-0 z-0 bg-black flex flex-col items-center justify-center">
           <video
