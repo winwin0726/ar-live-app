@@ -32,6 +32,10 @@ export class AppGateway implements OnGatewayInit {
   // 라방 전체 채팅 내역 (컨텍스트 유지용, 최근 15개 유지)
   private roomChatHistory: string[] = [];
 
+  // [WebRTC 시그널링] 최신 offer를 저장하여 새 시청자 접속 시 즉시 전달
+  private latestOffer: any = null;
+  private broadcasterSocketId: string | null = null;
+
   constructor(private readonly aiService: AiService) {}
 
   afterInit(server: Server) {
@@ -40,10 +44,21 @@ export class AppGateway implements OnGatewayInit {
 
   handleConnection(client: Socket) {
     console.log(`Websocket connected: ${client.id}`);
+    // 새 시청자 접속 시 저장된 offer가 있으면 즉시 전달 (타이밍 문제 해결)
+    if (this.latestOffer && client.id !== this.broadcasterSocketId) {
+      console.log(`[WebRTC] 기존 offer를 새 시청자(${client.id})에게 재전송`);
+      client.emit('offer', this.latestOffer);
+    }
   }
 
   handleDisconnect(client: Socket) {
     console.log(`Websocket disconnected: ${client.id}`);
+    // 방송자가 나가면 offer 캐시 초기화
+    if (client.id === this.broadcasterSocketId) {
+      this.latestOffer = null;
+      this.broadcasterSocketId = null;
+      console.log(`[WebRTC] 방송자 퇴장 - offer 캐시 초기화`);
+    }
   }
 
   /**
@@ -379,7 +394,13 @@ export class AppGateway implements OnGatewayInit {
 
   // --- WebRTC Signaling ---
   @SubscribeMessage('offer')
-  handleOffer(@MessageBody() data: any, @ConnectedSocket() client: Socket) { client.broadcast.emit('offer', data); }
+  handleOffer(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+    // 최신 offer와 방송자 소켓 ID를 캐시에 저장 (새 시청자 접속 시 재전송 용도)
+    this.latestOffer = data;
+    this.broadcasterSocketId = client.id;
+    console.log(`[WebRTC] offer 수신 및 캐시 저장 (broadcaster: ${client.id})`);
+    client.broadcast.emit('offer', data);
+  }
 
   @SubscribeMessage('answer')
   handleAnswer(@MessageBody() data: any, @ConnectedSocket() client: Socket) { client.broadcast.emit('answer', data); }
