@@ -43,11 +43,20 @@ export default function Home() {
 
   useEffect(() => {
     userRoleRef.current = userRole;
-    // Role이 'viewer'로 설정되었고, 대기 중인 offer가 있으면 즉시 처리
-    if (userRole === 'viewer' && pendingOfferRef.current && initViewerPCRef.current) {
-      console.log('[WebRTC] 대기 중이던 offer를 viewer role 설정 후 즉시 처리');
-      initViewerPCRef.current(pendingOfferRef.current);
-      pendingOfferRef.current = null;
+    // Role이 'viewer'로 설정되었을 때
+    if (userRole === 'viewer') {
+      // 1. 대기 중인 offer가 있으면 즉시 처리
+      if (pendingOfferRef.current && initViewerPCRef.current) {
+        console.log('[WebRTC] 대기 중이던 offer를 viewer role 설정 후 즉시 처리');
+        initViewerPCRef.current(pendingOfferRef.current);
+        pendingOfferRef.current = null;
+      }
+      // 2. 모바일(broadcaster)에게 fresh offer를 즉시 요청 (liveStarted 이벤트를 놓쳤을 때 대비)
+      if (socketRef.current) {
+        console.log('[WebRTC] viewer 역할 선택 → broadcaster에게 offer 재요청');
+        setCameraActive(false);
+        socketRef.current.emit('sendMessage', { sender: '시스템_viewer', type: 'system', text: '시청자 접속' });
+      }
     }
   }, [userRole]);
   
