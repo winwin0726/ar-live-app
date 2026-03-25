@@ -69,7 +69,7 @@ export default function Home() {
   const iceCandidateQueue = useRef<RTCIceCandidateInit[]>([]);
   const audioQueueRef = useRef<string[]>([]);
   const isPlayingRef = useRef<boolean>(false);
-  const initMediaRef = useRef<((qualityOverride?: string, facingOverride?: string) => Promise<void>) | null>(null);
+  const initMediaRef = useRef<((qualityOverride?: string, facingOverride?: string, forceHardwareRestart?: boolean) => Promise<void>) | null>(null);
 
   // Auto-Heal Diagnostics Harness
   const handleWebRTCRestart = useCallback(() => {
@@ -82,7 +82,7 @@ export default function Home() {
   const handleMediaRestart = useCallback(() => {
     if (initMediaRef.current) {
       console.log('🔄 [Harness] Camera Sensor Restart Triggered');
-      initMediaRef.current();
+      initMediaRef.current(undefined, undefined, true);
     }
   }, []);
 
@@ -374,8 +374,8 @@ export default function Home() {
     };
 
     // 2. 카메라/마이크 권한 요청 및 역할 분배
-    const initMedia = async (qualityOverride?: string, facingOverride?: string) => {
-      console.log(`📡 initMedia called. Role: ${userRoleRef.current}`);
+    const initMedia = async (qualityOverride?: string, facingOverride?: string, forceHardwareRestart = false) => {
+      console.log(`📡 initMedia called. Role: ${userRoleRef.current}, forceRestart: ${forceHardwareRestart}`);
       
       if (userRoleRef.current === 'viewer') {
         setCameraActive(false);
@@ -394,7 +394,8 @@ export default function Home() {
       const activeFacing = facingOverride || cameraFacing;
 
       if (userRoleRef.current === 'broadcaster') {
-        if (localStreamRef.current && peerConnectionRef.current) {
+        // 하드웨어 강제 재시작 모드가 아닐 때만 기존 연결을 재활용(iceRestart)합니다.
+        if (localStreamRef.current && peerConnectionRef.current && !forceHardwareRestart) {
           peerConnectionRef.current.createOffer({ iceRestart: true })
             .then(offer => peerConnectionRef.current!.setLocalDescription(offer))
             .then(() => newSocket.emit('offer', peerConnectionRef.current!.localDescription))
@@ -410,6 +411,11 @@ export default function Home() {
         }
 
         try {
+          // 강제 재시작인 경우, 기존의 죽어가는 센서(마이크 등)를 확실하게 종료해 권한 충돌을 막습니다.
+          if (forceHardwareRestart && localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(t => t.stop());
+          }
+
           const constraints: MediaTrackConstraints = { facingMode: activeFacing };
           if (activeQuality === 'SD') {
              constraints.width = { ideal: 640 }; constraints.height = { ideal: 480 }; 
