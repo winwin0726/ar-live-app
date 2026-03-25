@@ -460,10 +460,15 @@ export default function Home() {
 
     // 2.5 라방 시작 동기화 이벤트 리스너 (PC, 모바일 동시 시작)
     newSocket.on('liveStarted', (data) => {
-      setIsLiveStarted(true);
-      if (data && data.quality) setVideoQuality(data.quality);
-      if (data && data.facing) setCameraFacing(data.facing);
-      if (initMediaRef.current) initMediaRef.current(data?.quality || 'HD', data?.facing || 'user');
+      // [치명적 버그 수정] PC가 아직 역할을 선택하지 않았을 때(null) 이 이벤트를 받으면
+      // 강제로 화면이 넘어가면서 아무 역할도 수행하지 못하는 붕괴 상태에 빠졌음.
+      // 따라서 역할이 확고하게 'viewer'인 상태에서만 모바일의 재시작 신호를 받아들임.
+      if (userRoleRef.current === 'viewer') {
+        setIsLiveStarted(true);
+        if (data && data.quality) setVideoQuality(data.quality);
+        if (data && data.facing) setCameraFacing(data.facing);
+        if (initMediaRef.current) initMediaRef.current(data?.quality || 'HD', data?.facing || 'user');
+      }
     });
 
     // initViewerPC를 ref에 저장 (role 변경 시 대기 중 offer 처리용)
