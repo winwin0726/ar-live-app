@@ -379,7 +379,9 @@ export default function Home() {
       
       if (userRoleRef.current === 'viewer') {
         setCameraActive(false);
-        if (socketRef.current) socketRef.current.emit('sendMessage', { sender: '시스템_viewer', type: 'system', text: '시청자 접속' });
+        // [치명적 버그 수정] 여기서 '시청자 접속'을 또 쏘면, broadcaster가 0.1초만에 Offer를 두 번 연달아 쏘는
+        // '죽음의 폭격(Thrashing)'이 일어남. (특히 속도가 느린 모바일 뷰어 쪽에서 버티지 못하고 뻗어버리는 비대칭성의 원인)
+        // useEffect에서 이미 역할을 정할 때 한 번 완벽히 쏘므로 여기서는 단독 제거!
         console.log("PC 시청자 뷰: 모바일 영상 수신 대기 중...");
         return;
       }
