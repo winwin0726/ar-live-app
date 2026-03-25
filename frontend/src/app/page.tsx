@@ -45,15 +45,10 @@ export default function Home() {
     userRoleRef.current = userRole;
     // Role이 'viewer'로 설정되었을 때
     if (userRole === 'viewer') {
-      // 1. 대기 중인 offer가 있으면 즉시 처리
-      if (pendingOfferRef.current && initViewerPCRef.current) {
-        console.log('[WebRTC] 대기 중이던 offer를 viewer role 설정 후 즉시 처리');
-        initViewerPCRef.current(pendingOfferRef.current);
-        pendingOfferRef.current = null;
-      }
-      // 2. 모바일(broadcaster)에게 fresh offer를 즉시 요청 (liveStarted 이벤트를 놓쳤을 때 대비)
+      // 오직 한 길만 남깁니다: 무조건 broadcaster에게 새로운 fresh offer를 요청합니다.
+      // (과거에 쌓인 낡은 offer 캐시를 쓰면 이중 통신 충돌이 발생합니다.)
       if (socketRef.current) {
-        console.log('[WebRTC] viewer 역할 선택 → broadcaster에게 offer 재요청');
+        console.log('[WebRTC] viewer 역할 셋팅 완료 → broadcaster에게 신선한 offer 즉시 요청');
         setCameraActive(false);
         socketRef.current.emit('sendMessage', { sender: '시스템_viewer', type: 'system', text: '시청자 접속' });
       }
@@ -477,13 +472,9 @@ export default function Home() {
     // 3. WebRTC 시그널링 이벤트 리스너
     newSocket.on('offer', (offer) => {
       if (userRoleRef.current === 'viewer') {
-        initViewerPC(offer); // 시청자 확정 → 즉시 처리
-      } else if (userRoleRef.current === null) {
-        // 아직 역할 미정 → offer를 임시 저장 (나중에 viewer로 설정되면 처리)
-        console.log('[WebRTC] offer 수신했으나 role 미정 → 임시 저장');
-        pendingOfferRef.current = offer;
+        initViewerPC(offer); // 시청자 확정 → 가장 신선한 offer 수신 후 단 1회 처리
       }
-      // broadcaster는 자기 offer를 돌려받을 일이 없으므로 무시
+      // broadcaster이거나 아직 역할 미정이면 무시 (나중에 viewer 지정 시 새로 요청할 것이므로)
     });
 
     newSocket.on('answer', async (answer) => {
@@ -510,11 +501,17 @@ export default function Home() {
     newSocket.on("receiveMessage", (data: any) => {
       // 신규 시청자가 접속하거나 새로고침("다시 접근")하여 화면을 요청할 때
       if (data.sender === '시스템_viewer' && userRoleRef.current === 'broadcaster') {
-        if (localStreamRef.current) {
-          // [핵심 문제 해결 (제1법칙)] PC는 완전 새 RTCPeerConnection을 만드는데,
-          // 모바일 쪽에서 기존 RTCPeerConnection을 재사용(iceRestart)하면 상태 불일치(Mismatch) 붕괴 발생!
-          // 해결책: 시청자가 접속하면 모바일 쪽도 연결을 완전히 파괴하고 깨끗한 리셋(initBroadcasterPC) 수행.
-          console.log('[WebRTC] 시청자 접속 감지 - 방송자쪽 WebRTC 연결 완전 초기화(Reset) 및 새 Offer 발송');
+        if (localStreamRef.current && peerConnectionRef.current) {
+          console.log('[WebRTC] 새 시청자 접속 감지 - 방송자쪽 연결 파괴 없이 안전하게 ICE Restart(신규 Offer) 발송');
+          // [핵심 해결] 기존에는 initBroadcasterPC를 통해 pc.close()를 호출했는데, 
+          // 이로 인해 모바일 카메라 트랙이 강제 종료되며 양쪽 화면이 블랙아웃되는 치명적 버그 발생.
+          // 따라서 기존 PC 객체는 살려두되, 완전히 새로운 연결 경로(ICE)와 암호키를 가진 Offer를 생성해 전송.
+          peerConnectionRef.current.createOffer({ iceRestart: true })
+            .then(offer => peerConnectionRef.current!.setLocalDescription(offer))
+            .then(() => newSocket.emit('offer', peerConnectionRef.current!.localDescription))
+            .catch(e => console.error("Broadcaster ICE Restart Error:", e));
+        } else if (localStreamRef.current) {
+          // 혹시라도 PC 객체가 없으면 그때만 생성
           initBroadcasterPC(localStreamRef.current, videoQuality);
         }
         return;
